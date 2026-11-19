@@ -425,6 +425,54 @@ def _face_width_height(f):
     return max(us) - min(us), max(zs) - min(zs)
 
 
+def _loop_length(loop) -> float:
+    count = len(loop)
+    return sum((loop[i].position - loop[(i + 1) % count].position).length()
+               for i in range(count))
+
+
+def _curved_wall_plan(faces, top_z: float, tolerance: float = 1e-6):
+    """Axis length and thickness of a curved wall, read off its top face.
+
+    A wall's largest face is one side only when the wall is straight; on a
+    curved (faceted) wall it is the top or the bottom, which gave the wall a
+    Length of a few centimetres and a Width equal to its height. A prism of
+    constant thickness ``w`` along an axis of length ``L`` has a top of area
+    ``L·w`` and perimeter ``2L + 2w`` (``2L`` for a closed ring), whatever
+    its curvature, so ``L`` and ``w`` follow from the two. Returns
+    ``(L, w)``, or None when the wall is not a curved prism with a flat top
+    (straight walls keep the side-face measure)."""
+    axes = []
+    for f in faces:
+        n = f.normal()
+        if abs(n.z()) > 1e-3 or n.length() < 1e-9:
+            continue
+        angle = math.atan2(n.y(), n.x()) % math.pi       # side and its opposite
+        if not any(min(abs(angle - a), math.pi - abs(angle - a)) < 1e-3 for a in axes):
+            axes.append(angle)
+    if len(axes) <= 4:          # sides, ends and jambs (mitred ends at most)
+        return None
+    top = [f for f in faces if f.normal().z() > 1 - 1e-6
+           and all(abs(v.position.z() - top_z) <= tolerance for v in f.loop)]
+    if not top:
+        return None
+    area = sum(face_net_area(f) for f in top)
+    perimeter = sum(_loop_length(lp) for f in top for lp in (f.loop, *f.hole_loops))
+    if any(f.hole_loops for f in top):                   # a closed ring
+        length = perimeter / 2.0
+    else:
+        disc = perimeter * perimeter / 4.0 - 4.0 * area
+        if disc < 0:
+            return None
+        length = (perimeter / 2.0 + math.sqrt(disc)) / 2.0
+    if length <= tolerance:
+        return None
+    width = area / length
+    if not 0 < width <= length:
+        return None
+    return length, width
+
+
 def class_quantities(ifc_class: str, faces):
     """Standard per-class BaseQuantities from freeform geometry, honestly:
     every value is measured off the tagged faces (volume only when the set
@@ -454,17 +502,32 @@ def class_quantities(ifc_class: str, faces):
 
     metrado = None
     if ifc_class == "IfcWall":
-        side_gross = big.area()
-        side_net = face_net_area(big)
-        add("length", "Height", dz)
-        if dz > 1e-9:
-            add("length", "Length", side_gross / dz)
-        if side_net > 1e-9 and closed:
-            add("length", "Width", volume / side_net)
-        add("area", "GrossSideArea", side_gross)
-        add("area", "NetSideArea", side_net)
-        add("volume", "GrossVolume", volume)
-        metrado = side_net
+        top_z = max(v.position.z() for f in faces for v in f.loop)
+        curved = _curved_wall_plan(faces, top_z) if dz > 1e-9 else None
+        if curved is not None:
+            length, width = curved
+            side_gross = length * dz
+            # through openings remove width x opening area from the volume
+            side_net = volume / width if closed else side_gross
+            add("length", "Height", dz)
+            add("length", "Length", length)
+            add("length", "Width", width)
+            add("area", "GrossSideArea", side_gross)
+            add("area", "NetSideArea", min(side_net, side_gross))
+            add("volume", "GrossVolume", volume)
+            metrado = min(side_net, side_gross)
+        else:
+            side_gross = big.area()
+            side_net = face_net_area(big)
+            add("length", "Height", dz)
+            if dz > 1e-9:
+                add("length", "Length", side_gross / dz)
+            if side_net > 1e-9 and closed:
+                add("length", "Width", volume / side_net)
+            add("area", "GrossSideArea", side_gross)
+            add("area", "NetSideArea", side_net)
+            add("volume", "GrossVolume", volume)
+            metrado = side_net
     elif ifc_class == "IfcSlab":
         gross = big.area()
         net = face_net_area(big)
