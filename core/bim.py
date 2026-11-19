@@ -16,6 +16,11 @@ Storage:
 - groups: ``group.ifc = {"class": ..., "name": ...}`` (the group IS the
   object; its isolated mesh gives exact quantities).
 
+A tag may carry more than class and name — an extension that knows the
+element's design data puts it there, and the IFC export writes it
+(formats/ifc.py, #1222): ``"guid"``, ``"psets"``, ``"quantities"``,
+``"enums"`` and ``"attributes"``. Every key is optional.
+
 Grouping never drops a tag: a tagged group nested in another, and tagged
 faces that went into a group's mesh, are objects wherever they sit in the
 tree, measured in world space. A tagged group is its geometry less what
@@ -274,7 +279,8 @@ def _face_tags_in(mesh, memo, seen) -> dict:
 
 def collect_objects(scene, memo: dict | None = None) -> list[dict]:
     """Every tagged BIM object in the document, with live quantities:
-    ``{"key", "class", "name", "area", "volume" (or None), "faces" | "group"}``.
+    ``{"key", "tag", "class", "name", "area", "volume" (or None),
+    "faces" | "group"}`` — ``tag`` is the object's whole tag dict.
     Loose-face objects group by tag id; each tagged group is one object, at
     any depth of the tree. Tagged faces inside a group's mesh are one
     object per group and tag id: ``"faces"`` (world space) plus ``"owner"``
@@ -295,6 +301,7 @@ def collect_objects(scene, memo: dict | None = None) -> list[dict]:
                                        key=lambda kv: kv[0] or 0):
         out.append({
             "key": ("faces", obj_id),
+            "tag": tag,
             "class": tag.get("class", ""),
             "name": tag.get("name", ""),
             "area": face_set_area(faces),
@@ -315,6 +322,7 @@ def collect_objects(scene, memo: dict | None = None) -> list[dict]:
                     faces = _moved_faces(faces, m)
                 out.append({
                     "key": ("group-faces", id(g), obj_id),
+                    "tag": ftag,
                     "class": ftag.get("class", ""),
                     "name": ftag.get("name", ""),
                     "area": face_set_area(faces),
@@ -337,6 +345,7 @@ def collect_objects(scene, memo: dict | None = None) -> list[dict]:
         faces = _tagged_group_faces(g, base)
         obj = {
             "key": ("group", id(g)),
+            "tag": tag,
             "class": tag.get("class", ""),
             "name": tag.get("name", ""),
             "area": face_set_area(faces),
