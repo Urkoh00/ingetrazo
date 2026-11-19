@@ -357,6 +357,15 @@ def _implicit_uvw(face, tex, minv):
             gv.x(), gv.y(), gv.z(), float(cv)]
 
 
+def matrix_entries(m):
+    """``(row, col) -> value`` for a QMatrix4x4, read from ``data()``
+    (column-major). ``m(row, col)`` is not callable on every PySide6 that
+    requirements.txt admits: 6.10.0 raises "'QMatrix4x4' object is not
+    callable", and moving a textured group failed with it."""
+    values = m.data()
+    return lambda row, col: values[col * 4 + row]
+
+
 def _remap_uvws(mesh, m, faces=None) -> None:
     """Rewrite each face's world→UV affine map (``uvw``) so that evaluating
     it at the TRANSFORMED positions reproduces the prototype's UVs:
@@ -368,7 +377,8 @@ def _remap_uvws(mesh, m, faces=None) -> None:
     minv, ok = m.inverted()
     if not ok:
         return
-    tx, ty, tz = m(0, 3), m(1, 3), m(2, 3)
+    at, inv = matrix_entries(m), matrix_entries(minv)
+    tx, ty, tz = at(0, 3), at(1, 3), at(2, 3)
     for f in (mesh.faces if faces is None else faces):
         t = f.attrs.get("texture") if f.attrs else None
         uvw = t.get("uvw") if t else None
@@ -379,9 +389,9 @@ def _remap_uvws(mesh, m, faces=None) -> None:
         new = list(uvw)
         for base in (0, 4):
             gx, gy, gz, c = uvw[base:base + 4]
-            gpx = minv(0, 0) * gx + minv(1, 0) * gy + minv(2, 0) * gz
-            gpy = minv(0, 1) * gx + minv(1, 1) * gy + minv(2, 1) * gz
-            gpz = minv(0, 2) * gx + minv(1, 2) * gy + minv(2, 2) * gz
+            gpx = inv(0, 0) * gx + inv(1, 0) * gy + inv(2, 0) * gz
+            gpy = inv(0, 1) * gx + inv(1, 1) * gy + inv(2, 1) * gz
+            gpz = inv(0, 2) * gx + inv(1, 2) * gy + inv(2, 2) * gz
             new[base:base + 4] = [gpx, gpy, gpz,
                                   c - (gpx * tx + gpy * ty + gpz * tz)]
         f.attrs["texture"] = {**t, "uvw": new}
@@ -711,13 +721,14 @@ def transformed_attrs(attrs, m) -> dict:
     minv, ok = m.inverted()
     if not ok:
         return out
-    tx, ty, tz = m(0, 3), m(1, 3), m(2, 3)
+    at, inv = matrix_entries(m), matrix_entries(minv)
+    tx, ty, tz = at(0, 3), at(1, 3), at(2, 3)
     new = list(uvw)
     for base in (0, 4):
         gx, gy, gz, c = uvw[base:base + 4]
-        gpx = minv(0, 0) * gx + minv(1, 0) * gy + minv(2, 0) * gz
-        gpy = minv(0, 1) * gx + minv(1, 1) * gy + minv(2, 1) * gz
-        gpz = minv(0, 2) * gx + minv(1, 2) * gy + minv(2, 2) * gz
+        gpx = inv(0, 0) * gx + inv(1, 0) * gy + inv(2, 0) * gz
+        gpy = inv(0, 1) * gx + inv(1, 1) * gy + inv(2, 1) * gz
+        gpz = inv(0, 2) * gx + inv(1, 2) * gy + inv(2, 2) * gz
         new[base:base + 4] = [gpx, gpy, gpz,
                               c - (gpx * tx + gpy * ty + gpz * tz)]
     out["texture"] = {**t, "uvw": new}
